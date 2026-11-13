@@ -27,12 +27,26 @@ class MainActivity : Activity() {
         override fun run() { render(); handler.postDelayed(this, 1000) }
     }
 
+    private fun showError(msg: String) {
+        AlertDialog.Builder(this).setTitle("حصل خطأ").setMessage(msg.take(1500))
+            .setPositiveButton("تمام", null).show()
+    }
+
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
+        val sp = getSharedPreferences("t", MODE_PRIVATE)
+        Thread.setDefaultUncaughtExceptionHandler { _, e ->
+            sp.edit().putString("crash", android.util.Log.getStackTraceString(e)).commit()
+            Process.killProcess(Process.myPid())
+        }
         if (Build.VERSION.SDK_INT >= 33)
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
-        load()
+        try { load() } catch (e: Throwable) { items.clear() }
         buildUi()
+        sp.getString("crash", null)?.let {
+            sp.edit().remove("crash").apply()
+            showError(it)
+        }
     }
 
     override fun onResume() { super.onResume(); handler.post(tick) }
@@ -54,12 +68,15 @@ class MainActivity : Activity() {
         row.addView(mm, LinearLayout.LayoutParams(0, -2, 1f))
         val add = Button(this).apply { text = "إضافة وبدء العد" }
         add.setOnClickListener {
-            val n = name.text.toString().trim()
-            val mins = (hh.text.toString().toLongOrNull() ?: 0) * 60 + (mm.text.toString().toLongOrNull() ?: 0)
-            if (n.isEmpty() || mins <= 0) { Toast.makeText(this, "اكتب الاسم والوقت", Toast.LENGTH_SHORT).show(); return@setOnClickListener }
-            val dur = mins * 60_000
-            val it = Item((System.currentTimeMillis() % 1_000_000_000).toInt(), n, dur, System.currentTimeMillis() + dur)
-            items.add(it); schedule(it); save(); name.text.clear(); hh.text.clear(); mm.text.clear(); render()
+            try {
+                val n = name.text.toString().trim()
+                val mins = (hh.text.toString().toLongOrNull() ?: 0) * 60 + (mm.text.toString().toLongOrNull() ?: 0)
+                if (n.isEmpty() || mins <= 0) { Toast.makeText(this, "اكتب الاسم والوقت", Toast.LENGTH_SHORT).show(); return@setOnClickListener }
+                val dur = mins * 60_000
+                val item = Item((System.currentTimeMillis() % 1_000_000_000).toInt(), n, dur, System.currentTimeMillis() + dur)
+                items.add(item); save(); schedule(item)
+                name.text.clear(); hh.text.clear(); mm.text.clear(); render()
+            } catch (e: Throwable) { showError(android.util.Log.getStackTraceString(e)) }
         }
         list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val sv = ScrollView(this).apply { addView(list) }
@@ -68,35 +85,40 @@ class MainActivity : Activity() {
     }
 
     private fun render() {
-        list.removeAllViews()
-        val now = System.currentTimeMillis()
-        items.sortedBy { it.endAt }.forEach { it0 ->
-            val left = it0.endAt - now
-            val card = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(dp(14), dp(12), dp(14), dp(12))
-                setBackgroundColor(if (left <= 0) Color.parseColor("#1F6B3A") else Color.parseColor("#2A2A2A"))
+        try {
+            list.removeAllViews()
+            val now = System.currentTimeMillis()
+            items.sortedBy { it.endAt }.forEach { it0 ->
+                val left = it0.endAt - now
+                val card = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(dp(14), dp(12), dp(14), dp(12))
+                    setBackgroundColor(if (left <= 0) Color.parseColor("#1F6B3A") else Color.parseColor("#2A2A2A"))
+                }
+                val lp = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) }
+                card.addView(TextView(this).apply { text = it0.name; textSize = 18f })
+                val endStr = fmt.format(Instant.ofEpochMilli(it0.endAt).atZone(zone))
+                card.addView(TextView(this).apply { text = "يخلص: $endStr (القاهرة)" })
+                val s = if (left <= 0) "جاهز للاستلام ✅" else {
+                    val t = left / 1000
+                    String.format("%02d:%02d:%02d", t / 3600, (t % 3600) / 60, t % 60)
+                }
+                card.addView(TextView(this).apply { text = s; textSize = 26f; gravity = Gravity.CENTER })
+                val btns = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                if (left <= 0) btns.addView(Button(this).apply {
+                    text = "ابدأ تاني"
+                    setOnClickListener { it0.endAt = System.currentTimeMillis() + it0.durMs; save(); schedule(it0); render() }
+                })
+                btns.addView(Button(this).apply {
+                    text = "حذف"
+                    setOnClickListener { cancel(it0); items.remove(it0); save(); render() }
+                })
+                card.addView(btns)
+                list.addView(card, lp)
             }
-            val lp = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) }
-            card.addView(TextView(this).apply { text = it0.name; textSize = 18f })
-            val endStr = fmt.format(Instant.ofEpochMilli(it0.endAt).atZone(zone))
-            card.addView(TextView(this).apply { text = "يخلص: $endStr (القاهرة)" })
-            val s = if (left <= 0) "جاهز للاستلام ✅" else {
-                val t = left / 1000
-                "%02d:%02d:%02d".format(t / 3600, (t % 3600) / 60, t % 60)
-            }
-            card.addView(TextView(this).apply { text = s; textSize = 26f; gravity = Gravity.CENTER })
-            val btns = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-            if (left <= 0) btns.addView(Button(this).apply {
-                text = "ابدأ تاني"
-                setOnClickListener { it0.endAt = System.currentTimeMillis() + it0.durMs; schedule(it0); save(); render() }
-            })
-            btns.addView(Button(this).apply {
-                text = "حذف"
-                setOnClickListener { cancel(it0); items.remove(it0); save(); render() }
-            })
-            card.addView(btns)
-            list.addView(card, lp)
+        } catch (e: Throwable) {
+            handler.removeCallbacks(tick)
+            showError(android.util.Log.getStackTraceString(e))
         }
     }
 
@@ -107,7 +129,11 @@ class MainActivity : Activity() {
     private fun schedule(it: Item) {
         val am = getSystemService(AlarmManager::class.java)
         val show = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
-        am.setAlarmClock(AlarmManager.AlarmClockInfo(it.endAt, show), pi(it))
+        try {
+            am.setAlarmClock(AlarmManager.AlarmClockInfo(it.endAt, show), pi(it))
+        } catch (e: SecurityException) {
+            am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, it.endAt, pi(it))
+        }
     }
 
     private fun cancel(it: Item) {
@@ -122,7 +148,7 @@ class MainActivity : Activity() {
     }
 
     private fun load() {
-        val s = getSharedPreferences("t", MODE_PRIVATE).getString("items", "[]")
+        val s = getSharedPreferences("t", MODE_PRIVATE).getString("items", "[]") ?: "[]"
         val a = JSONArray(s)
         for (i in 0 until a.length()) {
             val o = a.getJSONObject(i)
