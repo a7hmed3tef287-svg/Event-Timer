@@ -80,3 +80,53 @@ class MainActivity : Activity() {
             val lp = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) }
             card.addView(TextView(this).apply { text = it0.name; textSize = 18f })
             val endStr = fmt.format(Instant.ofEpochMilli(it0.endAt).atZone(zone))
+            card.addView(TextView(this).apply { text = "يخلص: $endStr (القاهرة)" })
+            val s = if (left <= 0) "جاهز للاستلام ✅" else {
+                val t = left / 1000
+                "%02d:%02d:%02d".format(t / 3600, (t % 3600) / 60, t % 60)
+            }
+            card.addView(TextView(this).apply { text = s; textSize = 26f; gravity = Gravity.CENTER })
+            val btns = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            if (left <= 0) btns.addView(Button(this).apply {
+                text = "ابدأ تاني"
+                setOnClickListener { it0.endAt = System.currentTimeMillis() + it0.durMs; schedule(it0); save(); render() }
+            })
+            btns.addView(Button(this).apply {
+                text = "حذف"
+                setOnClickListener { cancel(it0); items.remove(it0); save(); render() }
+            })
+            card.addView(btns)
+            list.addView(card, lp)
+        }
+    }
+
+    private fun pi(it: Item): PendingIntent = PendingIntent.getBroadcast(
+        this, it.id, Intent(this, AlarmReceiver::class.java).putExtra("name", it.name).putExtra("id", it.id),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+
+    private fun schedule(it: Item) {
+        val am = getSystemService(AlarmManager::class.java)
+        val show = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
+        am.setAlarmClock(AlarmManager.AlarmClockInfo(it.endAt, show), pi(it))
+    }
+
+    private fun cancel(it: Item) {
+        getSystemService(AlarmManager::class.java).cancel(pi(it))
+        getSystemService(NotificationManager::class.java).cancel(it.id)
+    }
+
+    private fun save() {
+        val a = JSONArray()
+        items.forEach { a.put(JSONObject().put("id", it.id).put("n", it.name).put("d", it.durMs).put("e", it.endAt)) }
+        getSharedPreferences("t", MODE_PRIVATE).edit().putString("items", a.toString()).apply()
+    }
+
+    private fun load() {
+        val s = getSharedPreferences("t", MODE_PRIVATE).getString("items", "[]")
+        val a = JSONArray(s)
+        for (i in 0 until a.length()) {
+            val o = a.getJSONObject(i)
+            items.add(Item(o.getInt("id"), o.getString("n"), o.getLong("d"), o.getLong("e")))
+        }
+    }
+}
