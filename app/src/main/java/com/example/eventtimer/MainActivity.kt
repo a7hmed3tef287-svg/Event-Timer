@@ -18,9 +18,13 @@ import android.media.Ringtone
 import android.media.RingtoneManager
 import android.os.*
 import android.text.InputType
+import android.text.Spannable
+import android.text.SpannableString
+import android.text.style.ForegroundColorSpan
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.inputmethod.InputMethodManager
 import android.widget.*
 import org.json.JSONArray
 import org.json.JSONObject
@@ -37,6 +41,7 @@ class MainActivity : Activity(), SensorEventListener {
 
     private val items = mutableListOf<Item>()
     private val accounts = mutableListOf<String>()
+    private val colors = HashMap<String, Int>()
     private val holders = mutableListOf<Holder>()
     private lateinit var list: LinearLayout
     private lateinit var soundBtn: Button
@@ -44,6 +49,10 @@ class MainActivity : Activity(), SensorEventListener {
     private lateinit var hhF: EditText
     private lateinit var mmF: EditText
     private lateinit var accRow: LinearLayout
+    private lateinit var addPanel: LinearLayout
+    private lateinit var soundPanel: LinearLayout
+    private lateinit var addToggle: TextView
+    private lateinit var soundToggle: TextView
     private var lastAddedId = -1
     private var soundOn = true
     private var testR: Ringtone? = null
@@ -63,6 +72,16 @@ class MainActivity : Activity(), SensorEventListener {
     private val cGreen = Color.parseColor("#1F8A4C")
     private val cRed = Color.parseColor("#5A2233")
 
+    private val palette = listOf(
+        Pair("#FF6B6B", "🔴 أحمر"), Pair("#4DABF7", "🔵 أزرق"),
+        Pair("#51CF66", "🟢 أخضر"), Pair("#FFD43B", "🟡 أصفر"),
+        Pair("#B197FC", "🟣 بنفسجي"), Pair("#FF922B", "🟠 برتقالي"),
+        Pair("#F783AC", "🌸 وردي"), Pair("#22D3EE", "🩵 سماوي")
+    )
+
+    private fun colorOf(n: String): Int =
+        colors[n] ?: Color.parseColor(palette[Math.abs(n.hashCode() % palette.size)].first)
+
     private fun showError(msg: String) {
         AlertDialog.Builder(this).setTitle("حصل خطأ").setMessage(msg.take(1500))
             .setPositiveButton("تمام", null).show()
@@ -80,8 +99,10 @@ class MainActivity : Activity(), SensorEventListener {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
         try { load() } catch (e: Throwable) { items.clear() }
         try { loadAccounts() } catch (e: Throwable) { accounts.clear() }
+        try { loadColors() } catch (e: Throwable) { colors.clear() }
         items.forEach { if (it.name !in accounts) accounts.add(it.name) }
         buildUi()
+        setAddOpen(items.isEmpty())
         rebuild()
         sp.getString("crash", null)?.let {
             sp.edit().remove("crash").apply()
@@ -96,6 +117,7 @@ class MainActivity : Activity(), SensorEventListener {
         sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)?.let {
             sm.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME)
         }
+        TimerWidget.refresh(this)
     }
 
     override fun onPause() {
@@ -158,6 +180,7 @@ class MainActivity : Activity(), SensorEventListener {
         c.setTextColor(Color.WHITE)
         c.textSize = 13f
         c.typeface = Typeface.DEFAULT_BOLD
+        c.gravity = Gravity.CENTER
         c.setPadding(dp(14), dp(8), dp(14), dp(8))
         c.background = rounded(bg, 20)
         return c
@@ -185,9 +208,31 @@ class MainActivity : Activity(), SensorEventListener {
         return p
     }
 
+    private fun setAddOpen(o: Boolean) {
+        addPanel.visibility = if (o) View.VISIBLE else View.GONE
+        addToggle.text = if (o) "✖" else "➕"
+    }
+
     private fun refreshSoundBtn() {
         soundBtn.text = if (soundOn) "🔔 الصوت شغال" else "🔕 الصوت مقفول"
         style3d(soundBtn, Color.parseColor(if (soundOn) "#2EC4B6" else "#6B7280"))
+        soundToggle.text = if (soundOn) "🔊" else "🔇"
+    }
+
+    private fun pickColor(n: String) {
+        AlertDialog.Builder(this).setTitle("لون: $n")
+            .setItems(palette.map { it.second }.toTypedArray()) { _, i ->
+                colors[n] = Color.parseColor(palette[i].first)
+                saveColors(); refreshAccounts(); rebuild()
+            }.show()
+    }
+
+    private fun accountMenu(n: String) {
+        AlertDialog.Builder(this).setTitle(n)
+            .setItems(arrayOf("🎨 تغيير اللون", "🗑 حذف من القائمة")) { _, i ->
+                if (i == 0) pickColor(n)
+                else { accounts.remove(n); saveAccounts(); refreshAccounts() }
+            }.show()
     }
 
     private fun refreshAccounts() {
@@ -201,14 +246,12 @@ class MainActivity : Activity(), SensorEventListener {
             return
         }
         accounts.toList().forEach { n ->
-            val c = chip("👤 $n", Color.parseColor("#3A4070"))
+            val c = chip("", Color.parseColor("#3A4070"))
+            val sp = SpannableString("● $n")
+            sp.setSpan(ForegroundColorSpan(colorOf(n)), 0, 1, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+            c.text = sp
             c.setOnClickListener { nameF.setText(n) }
-            c.setOnLongClickListener {
-                AlertDialog.Builder(this).setTitle("حذف الحساب من القائمة؟").setMessage(n)
-                    .setPositiveButton("حذف") { _, _ -> accounts.remove(n); saveAccounts(); refreshAccounts() }
-                    .setNegativeButton("لا", null).show()
-                true
-            }
+            c.setOnLongClickListener { accountMenu(n); true }
             accRow.addView(c, LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(6) })
         }
     }
@@ -233,35 +276,50 @@ class MainActivity : Activity(), SensorEventListener {
         val root = LinearLayout(this)
         root.orientation = LinearLayout.VERTICAL
         root.layoutDirection = View.LAYOUT_DIRECTION_RTL
-        root.setPadding(dp(16), dp(44), dp(16), dp(16))
+        root.setPadding(dp(16), dp(40), dp(16), dp(8))
         root.background = GradientDrawable(
             GradientDrawable.Orientation.TOP_BOTTOM,
             intArrayOf(Color.parseColor("#0F1226"), Color.parseColor("#1B1F3B"))
         )
 
+        // ---- الهيدر
+        val head = LinearLayout(this)
+        head.orientation = LinearLayout.HORIZONTAL
+        head.gravity = Gravity.CENTER_VERTICAL
+        val tcol = LinearLayout(this)
+        tcol.orientation = LinearLayout.VERTICAL
         val title = TextView(this)
         title.text = "⚔️ مؤقت الإيفنت"
-        title.textSize = 26f
+        title.textSize = 22f
         title.typeface = Typeface.DEFAULT_BOLD
         title.setTextColor(cGold)
         title.setShadowLayer(10f, 0f, 6f, Color.BLACK)
-        root.addView(title)
         val sub = TextView(this)
         sub.text = "بتوقيت القاهرة 🇪🇬"
+        sub.textSize = 12f
         sub.setTextColor(cGray)
-        root.addView(sub)
+        tcol.addView(title)
+        tcol.addView(sub)
+        addToggle = chip("➕", Color.parseColor("#FF7A59"))
+        addToggle.textSize = 18f
+        soundToggle = chip("🔊", Color.parseColor("#4B3F8F"))
+        soundToggle.textSize = 18f
+        head.addView(tcol, LinearLayout.LayoutParams(0, -2, 1f))
+        head.addView(soundToggle, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(8) })
+        head.addView(addToggle, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(8) })
+        root.addView(head)
 
-        // ---- صندوق الإضافة
-        val box = panel()
+        // ---- لوحة الإضافة
+        addPanel = panel()
         nameF = field("👤 اسم الحساب / الإيميل", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS)
-        box.addView(nameF)
+        addPanel.addView(nameF)
 
         accRow = LinearLayout(this)
         accRow.orientation = LinearLayout.HORIZONTAL
         val accScroll = HorizontalScrollView(this)
         accScroll.isHorizontalScrollBarEnabled = false
         accScroll.addView(accRow)
-        box.addView(accScroll, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+        addPanel.addView(accScroll, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
 
         val quickRow = LinearLayout(this)
         quickRow.orientation = LinearLayout.HORIZONTAL
@@ -279,7 +337,7 @@ class MainActivity : Activity(), SensorEventListener {
         val quickScroll = HorizontalScrollView(this)
         quickScroll.isHorizontalScrollBarEnabled = false
         quickScroll.addView(quickRow)
-        box.addView(quickScroll, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+        addPanel.addView(quickScroll, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
 
         val row = LinearLayout(this)
         row.orientation = LinearLayout.HORIZONTAL
@@ -287,11 +345,12 @@ class MainActivity : Activity(), SensorEventListener {
         gap.marginEnd = dp(8)
         row.addView(hhF, gap)
         row.addView(mmF, LinearLayout.LayoutParams(0, -2, 1f))
-        box.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+        addPanel.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
 
         val add = btn("➕ إضافة وبدء العد", "#FF7A59")
-        box.addView(add, LinearLayout.LayoutParams(-1, dp(54)).apply { topMargin = dp(10) })
-        root.addView(box, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(16) })
+        addPanel.addView(add, LinearLayout.LayoutParams(-1, dp(52)).apply { topMargin = dp(10) })
+
+        addToggle.setOnClickListener { setAddOpen(addPanel.visibility != View.VISIBLE) }
 
         add.setOnClickListener {
             try {
@@ -307,12 +366,15 @@ class MainActivity : Activity(), SensorEventListener {
                 if (n !in accounts) { accounts.add(n); saveAccounts(); refreshAccounts() }
                 lastAddedId = item.id
                 nameF.text.clear(); hhF.text.clear(); mmF.text.clear()
+                getSystemService(InputMethodManager::class.java).hideSoftInputFromWindow(nameF.windowToken, 0)
+                setAddOpen(false)
                 rebuild()
             } catch (e: Throwable) { showError(android.util.Log.getStackTraceString(e)) }
         }
 
-        // ---- صندوق التحكم في الصوت
-        val sbox = panel()
+        // ---- لوحة الصوت
+        soundPanel = panel()
+        soundPanel.visibility = View.GONE
         val srow = LinearLayout(this)
         srow.orientation = LinearLayout.HORIZONTAL
         soundBtn = btn("", "#2EC4B6")
@@ -337,13 +399,13 @@ class MainActivity : Activity(), SensorEventListener {
         srow.addView(soundBtn, m)
         srow.addView(test, m2)
         srow.addView(stop, LinearLayout.LayoutParams(0, dp(48), 1f))
-        sbox.addView(srow)
+        soundPanel.addView(srow)
 
         val vl = TextView(this)
         vl.text = "🔊 مستوى صوت المنبّه"
         vl.setTextColor(cGray)
         vl.setPadding(0, dp(10), 0, 0)
-        sbox.addView(vl)
+        soundPanel.addView(vl)
         val am = getSystemService(AudioManager::class.java)
         val seek = SeekBar(this)
         seek.max = am.getStreamMaxVolume(AudioManager.STREAM_ALARM)
@@ -357,14 +419,22 @@ class MainActivity : Activity(), SensorEventListener {
             override fun onStartTrackingTouch(s: SeekBar) {}
             override fun onStopTrackingTouch(s: SeekBar) { testSound() }
         })
-        sbox.addView(seek)
-        root.addView(sbox, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
+        soundPanel.addView(seek)
+        soundToggle.setOnClickListener {
+            soundPanel.visibility = if (soundPanel.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+        }
 
+        // ---- المحتوى القابل للتمرير
         list = LinearLayout(this)
         list.orientation = LinearLayout.VERTICAL
+        val content = LinearLayout(this)
+        content.orientation = LinearLayout.VERTICAL
+        content.addView(addPanel, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
+        content.addView(soundPanel, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
+        content.addView(list)
         val sv = ScrollView(this)
         sv.clipToPadding = false
-        sv.addView(list)
+        sv.addView(content)
         root.addView(sv, LinearLayout.LayoutParams(-1, 0, 1f))
         setContentView(root)
         refreshAccounts()
@@ -376,7 +446,7 @@ class MainActivity : Activity(), SensorEventListener {
             holders.clear()
             if (items.isEmpty()) {
                 val e = TextView(this)
-                e.text = "🎮 مفيش مؤقتات لسه\nضيف أول حساب من فوق"
+                e.text = "🎮 مفيش مؤقتات لسه\nدوس ➕ فوق وضيف أول حساب"
                 e.gravity = Gravity.CENTER
                 e.textSize = 16f
                 e.setTextColor(cGray)
@@ -389,52 +459,75 @@ class MainActivity : Activity(), SensorEventListener {
     }
 
     private fun addCard(it0: Item) {
-        val card = panel()
-        card.setPadding(dp(18), dp(14), dp(18), dp(14))
+        val col = colorOf(it0.name)
+        val card = LinearLayout(this)
+        card.orientation = LinearLayout.HORIZONTAL
+        val bg = rounded(cCard, 18)
+        bg.setStroke(dp(1), Color.parseColor("#3A4070"))
+        card.background = bg
+        card.elevation = dp(6).toFloat()
         card.cameraDistance = resources.displayMetrics.density * 8000f
 
+        val stripe = View(this)
+        stripe.background = rounded(col, 4)
+        card.addView(stripe, LinearLayout.LayoutParams(dp(6), -1).apply {
+            setMargins(dp(8), dp(10), dp(4), dp(10))
+        })
+
+        val body = LinearLayout(this)
+        body.orientation = LinearLayout.VERTICAL
+        body.setPadding(dp(10), dp(10), dp(14), dp(10))
+
+        val top = LinearLayout(this)
+        top.orientation = LinearLayout.HORIZONTAL
+        top.gravity = Gravity.CENTER_VERTICAL
         val nm = TextView(this)
-        nm.text = "🎮 " + it0.name
-        nm.textSize = 18f
+        nm.text = it0.name
+        nm.textSize = 17f
         nm.typeface = Typeface.DEFAULT_BOLD
-        nm.setTextColor(Color.WHITE)
-        val end = TextView(this)
-        end.textSize = 13f
-        end.setTextColor(cGray)
+        nm.setTextColor(col)
+        nm.maxLines = 1
+        nm.setOnLongClickListener { pickColor(it0.name); true }
         val time = TextView(this)
-        time.textSize = 34f
+        time.textSize = 24f
         time.typeface = Typeface.MONOSPACE
-        time.gravity = Gravity.CENTER
-        time.setShadowLayer(8f, 0f, 6f, Color.BLACK)
-        time.setPadding(0, dp(8), 0, dp(8))
+        time.setShadowLayer(6f, 0f, 4f, Color.BLACK)
+        top.addView(nm, LinearLayout.LayoutParams(0, -2, 1f))
+        top.addView(time, LinearLayout.LayoutParams(-2, -2))
+
+        val end = TextView(this)
+        end.textSize = 12f
+        end.setTextColor(cGray)
         val bar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal)
         bar.max = 1000
-        bar.progressTintList = ColorStateList.valueOf(cGold)
+        bar.progressTintList = ColorStateList.valueOf(col)
         bar.progressBackgroundTintList = ColorStateList.valueOf(Color.parseColor("#3A4070"))
 
         val restart = btn("🔁 ابدأ تاني", "#2EC4B6")
+        restart.textSize = 13f
         restart.setOnClickListener {
             it0.endAt = System.currentTimeMillis() + it0.durMs
             save(); schedule(it0); rebuild()
         }
         val del = btn("🗑 حذف", "#E5484D")
+        del.textSize = 13f
         del.setOnClickListener {
             cancel(it0); items.remove(it0); save(); rebuild()
         }
         val btns = LinearLayout(this)
         btns.orientation = LinearLayout.HORIZONTAL
-        val p1 = LinearLayout.LayoutParams(0, dp(48), 1f)
+        val p1 = LinearLayout.LayoutParams(0, dp(42), 1f)
         p1.marginEnd = dp(6)
         btns.addView(restart, p1)
-        btns.addView(del, LinearLayout.LayoutParams(0, dp(48), 1f))
+        btns.addView(del, LinearLayout.LayoutParams(0, dp(42), 1f))
 
-        card.addView(nm)
-        card.addView(end)
-        card.addView(time)
-        card.addView(bar, LinearLayout.LayoutParams(-1, dp(8)))
-        card.addView(btns, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
+        body.addView(top)
+        body.addView(end)
+        body.addView(bar, LinearLayout.LayoutParams(-1, dp(6)).apply { topMargin = dp(6) })
+        body.addView(btns, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+        card.addView(body, LinearLayout.LayoutParams(0, -2, 1f))
 
-        list.addView(card, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12); bottomMargin = dp(4) })
+        list.addView(card, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8); bottomMargin = dp(4) })
         holders.add(Holder(it0, card, end, time, bar, restart, it0.endAt <= System.currentTimeMillis()))
 
         if (it0.id == lastAddedId) {
@@ -454,15 +547,15 @@ class MainActivity : Activity(), SensorEventListener {
                 val ready = left <= 0
                 val bg = h.card.background as GradientDrawable
                 if (ready) {
-                    h.time.text = "جاهز للاستلام ✅"
-                    h.time.textSize = 24f
+                    h.time.text = "جاهز ✅"
+                    h.time.textSize = 18f
                     h.time.setTextColor(Color.WHITE)
                     h.bar.progress = 1000
                     bg.setColor(cGreen)
                 } else {
                     val t = left / 1000
                     h.time.text = String.format("%02d:%02d:%02d", t / 3600, (t % 3600) / 60, t % 60)
-                    h.time.textSize = 34f
+                    h.time.textSize = 24f
                     val soon = left < 60_000
                     h.time.setTextColor(if (soon) Color.parseColor("#FF6B6B") else cGold)
                     bg.setColor(if (soon) cRed else cCard)
@@ -473,6 +566,7 @@ class MainActivity : Activity(), SensorEventListener {
                     h.card.animate().scaleX(1.04f).scaleY(1.04f).setDuration(180).withEndAction {
                         h.card.animate().scaleX(1f).scaleY(1f).setDuration(180).start()
                     }.start()
+                    TimerWidget.refresh(this)
                 }
                 h.ready = ready
             }
@@ -493,6 +587,7 @@ class MainActivity : Activity(), SensorEventListener {
         val a = JSONArray()
         items.forEach { a.put(JSONObject().put("id", it.id).put("n", it.name).put("d", it.durMs).put("e", it.endAt)) }
         getSharedPreferences("t", MODE_PRIVATE).edit().putString("items", a.toString()).apply()
+        TimerWidget.refresh(this)
     }
 
     private fun load() {
@@ -514,5 +609,16 @@ class MainActivity : Activity(), SensorEventListener {
         val s = getSharedPreferences("t", MODE_PRIVATE).getString("accounts", "[]") ?: "[]"
         val a = JSONArray(s)
         for (i in 0 until a.length()) accounts.add(a.getString(i))
+    }
+
+    private fun saveColors() {
+        val o = JSONObject()
+        colors.forEach { (k, v) -> o.put(k, v) }
+        getSharedPreferences("t", MODE_PRIVATE).edit().putString("colors", o.toString()).apply()
+    }
+
+    private fun loadColors() {
+        val o = JSONObject(getSharedPreferences("t", MODE_PRIVATE).getString("colors", "{}") ?: "{}")
+        o.keys().forEach { colors[it] = o.getInt(it) }
     }
 }
