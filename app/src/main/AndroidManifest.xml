@@ -1,39 +1,18 @@
-package com.example.eventtimer
-
-import android.app.*
-import android.content.*
-import android.media.AudioAttributes
-import android.media.RingtoneManager
-
-class AlarmReceiver : BroadcastReceiver() {
-    override fun onReceive(c: Context, i: Intent) {
-        val name = i.getStringExtra("name") ?: ""
-        val id = i.getIntExtra("id", 0)
-        val soundOn = c.getSharedPreferences("t", Context.MODE_PRIVATE).getBoolean("sound", true)
-        val nm = c.getSystemService(NotificationManager::class.java)
-        val sound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
-        val loud = NotificationChannel("done", "انتهاء المؤقت (بصوت)", NotificationManager.IMPORTANCE_HIGH).apply {
-            setSound(sound, AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).build())
-            enableVibration(true)
-            vibrationPattern = longArrayOf(0, 600, 300, 600)
-        }
-        val quiet = NotificationChannel("quiet", "انتهاء المؤقت (صامت)", NotificationManager.IMPORTANCE_HIGH).apply {
-            setSound(null, null)
-            enableVibration(true)
-            vibrationPattern = longArrayOf(0, 600, 300, 600)
-        }
-        nm.createNotificationChannel(loud)
-        nm.createNotificationChannel(quiet)
-        val open = PendingIntent.getActivity(c, 0, Intent(c, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
-        val n = Notification.Builder(c, if (soundOn) "done" else "quiet")
-            .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
-            .setContentTitle(name)
-            .setContentText("خلص الوقت، استلم الجايزة")
-            .setContentIntent(open)
-            .setAutoCancel(true)
-            .setCategory(Notification.CATEGORY_ALARM)
-            .build()
-        if (soundOn) n.flags = n.flags or Notification.FLAG_INSISTENT
-        nm.notify(id, n)
-    }
-}
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <uses-permission android:name="android.permission.VIBRATE"/>
+    <application
+        android:label="Event Timer"
+        android:icon="@android:drawable/ic_lock_idle_alarm"
+        android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
+        android:supportsRtl="true">
+        <activity android:name=".MainActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+        <receiver android:name=".AlarmReceiver" android:exported="false"/>
+    </application>
+</manifest>
