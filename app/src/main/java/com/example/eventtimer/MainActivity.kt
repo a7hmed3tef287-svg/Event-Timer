@@ -36,9 +36,14 @@ class MainActivity : Activity(), SensorEventListener {
     )
 
     private val items = mutableListOf<Item>()
+    private val accounts = mutableListOf<String>()
     private val holders = mutableListOf<Holder>()
     private lateinit var list: LinearLayout
     private lateinit var soundBtn: Button
+    private lateinit var nameF: EditText
+    private lateinit var hhF: EditText
+    private lateinit var mmF: EditText
+    private lateinit var accRow: LinearLayout
     private var lastAddedId = -1
     private var soundOn = true
     private var testR: Ringtone? = null
@@ -74,6 +79,8 @@ class MainActivity : Activity(), SensorEventListener {
         if (Build.VERSION.SDK_INT >= 33)
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
         try { load() } catch (e: Throwable) { items.clear() }
+        try { loadAccounts() } catch (e: Throwable) { accounts.clear() }
+        items.forEach { if (it.name !in accounts) accounts.add(it.name) }
         buildUi()
         rebuild()
         sp.getString("crash", null)?.let {
@@ -145,6 +152,17 @@ class MainActivity : Activity(), SensorEventListener {
         return b
     }
 
+    private fun chip(t: String, bg: Int): TextView {
+        val c = TextView(this)
+        c.text = t
+        c.setTextColor(Color.WHITE)
+        c.textSize = 13f
+        c.typeface = Typeface.DEFAULT_BOLD
+        c.setPadding(dp(14), dp(8), dp(14), dp(8))
+        c.background = rounded(bg, 20)
+        return c
+    }
+
     private fun field(h: String, type: Int): EditText {
         val e = EditText(this)
         e.hint = h
@@ -170,6 +188,29 @@ class MainActivity : Activity(), SensorEventListener {
     private fun refreshSoundBtn() {
         soundBtn.text = if (soundOn) "🔔 الصوت شغال" else "🔕 الصوت مقفول"
         style3d(soundBtn, Color.parseColor(if (soundOn) "#2EC4B6" else "#6B7280"))
+    }
+
+    private fun refreshAccounts() {
+        accRow.removeAllViews()
+        if (accounts.isEmpty()) {
+            val h = TextView(this)
+            h.text = "الحسابات المحفوظة هتظهر هنا"
+            h.setTextColor(cGray)
+            h.textSize = 12f
+            accRow.addView(h)
+            return
+        }
+        accounts.toList().forEach { n ->
+            val c = chip("👤 $n", Color.parseColor("#3A4070"))
+            c.setOnClickListener { nameF.setText(n) }
+            c.setOnLongClickListener {
+                AlertDialog.Builder(this).setTitle("حذف الحساب من القائمة؟").setMessage(n)
+                    .setPositiveButton("حذف") { _, _ -> accounts.remove(n); saveAccounts(); refreshAccounts() }
+                    .setNegativeButton("لا", null).show()
+                true
+            }
+            accRow.addView(c, LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(6) })
+        }
     }
 
     private fun testSound() {
@@ -212,25 +253,50 @@ class MainActivity : Activity(), SensorEventListener {
 
         // ---- صندوق الإضافة
         val box = panel()
-        val name = field("👤 اسم الحساب / الإيميل", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS)
+        nameF = field("👤 اسم الحساب / الإيميل", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS)
+        box.addView(nameF)
+
+        accRow = LinearLayout(this)
+        accRow.orientation = LinearLayout.HORIZONTAL
+        val accScroll = HorizontalScrollView(this)
+        accScroll.isHorizontalScrollBarEnabled = false
+        accScroll.addView(accRow)
+        box.addView(accScroll, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+
+        val quickRow = LinearLayout(this)
+        quickRow.orientation = LinearLayout.HORIZONTAL
+        val quick = listOf("30 د" to 30, "50 د" to 50, "ساعة" to 60, "ساعة و20" to 80, "ساعتين" to 120)
+        hhF = field("ساعات", InputType.TYPE_CLASS_NUMBER)
+        mmF = field("دقايق", InputType.TYPE_CLASS_NUMBER)
+        quick.forEach { (label, m) ->
+            val c = chip("⏱ $label", Color.parseColor("#4B3F8F"))
+            c.setOnClickListener {
+                hhF.setText(if (m / 60 > 0) "${m / 60}" else "")
+                mmF.setText(if (m % 60 > 0) "${m % 60}" else "")
+            }
+            quickRow.addView(c, LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(6) })
+        }
+        val quickScroll = HorizontalScrollView(this)
+        quickScroll.isHorizontalScrollBarEnabled = false
+        quickScroll.addView(quickRow)
+        box.addView(quickScroll, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+
         val row = LinearLayout(this)
         row.orientation = LinearLayout.HORIZONTAL
-        val hh = field("ساعات", InputType.TYPE_CLASS_NUMBER)
-        val mm = field("دقايق", InputType.TYPE_CLASS_NUMBER)
-        val add = btn("➕ إضافة وبدء العد", "#FF7A59")
         val gap = LinearLayout.LayoutParams(0, -2, 1f)
         gap.marginEnd = dp(8)
-        row.addView(hh, gap)
-        row.addView(mm, LinearLayout.LayoutParams(0, -2, 1f))
-        box.addView(name)
+        row.addView(hhF, gap)
+        row.addView(mmF, LinearLayout.LayoutParams(0, -2, 1f))
         box.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+
+        val add = btn("➕ إضافة وبدء العد", "#FF7A59")
         box.addView(add, LinearLayout.LayoutParams(-1, dp(54)).apply { topMargin = dp(10) })
         root.addView(box, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(16) })
 
         add.setOnClickListener {
             try {
-                val n = name.text.toString().trim()
-                val mins = (hh.text.toString().toLongOrNull() ?: 0) * 60 + (mm.text.toString().toLongOrNull() ?: 0)
+                val n = nameF.text.toString().trim()
+                val mins = (hhF.text.toString().toLongOrNull() ?: 0) * 60 + (mmF.text.toString().toLongOrNull() ?: 0)
                 if (n.isEmpty() || mins <= 0) {
                     Toast.makeText(this, "اكتب الاسم والوقت", Toast.LENGTH_SHORT).show()
                     return@setOnClickListener
@@ -238,8 +304,9 @@ class MainActivity : Activity(), SensorEventListener {
                 val dur = mins * 60_000
                 val item = Item((System.currentTimeMillis() % 1_000_000_000).toInt(), n, dur, System.currentTimeMillis() + dur)
                 items.add(item); save(); schedule(item)
+                if (n !in accounts) { accounts.add(n); saveAccounts(); refreshAccounts() }
                 lastAddedId = item.id
-                name.text.clear(); hh.text.clear(); mm.text.clear()
+                nameF.text.clear(); hhF.text.clear(); mmF.text.clear()
                 rebuild()
             } catch (e: Throwable) { showError(android.util.Log.getStackTraceString(e)) }
         }
@@ -300,6 +367,7 @@ class MainActivity : Activity(), SensorEventListener {
         sv.addView(list)
         root.addView(sv, LinearLayout.LayoutParams(-1, 0, 1f))
         setContentView(root)
+        refreshAccounts()
     }
 
     private fun rebuild() {
@@ -414,23 +482,11 @@ class MainActivity : Activity(), SensorEventListener {
         }
     }
 
-    private fun pi(it: Item): PendingIntent = PendingIntent.getBroadcast(
-        this, it.id, Intent(this, AlarmReceiver::class.java).putExtra("name", it.name).putExtra("id", it.id),
-        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+    private fun schedule(x: Item) = Scheduler.schedule(this, x.id, x.name, x.endAt)
 
-    private fun schedule(it: Item) {
-        val am = getSystemService(AlarmManager::class.java)
-        val show = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
-        try {
-            am.setAlarmClock(AlarmManager.AlarmClockInfo(it.endAt, show), pi(it))
-        } catch (e: SecurityException) {
-            am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, it.endAt, pi(it))
-        }
-    }
-
-    private fun cancel(it: Item) {
-        getSystemService(AlarmManager::class.java).cancel(pi(it))
-        getSystemService(NotificationManager::class.java).cancel(it.id)
+    private fun cancel(x: Item) {
+        Scheduler.cancel(this, x.id, x.name)
+        getSystemService(NotificationManager::class.java).cancel(x.id)
     }
 
     private fun save() {
@@ -446,5 +502,17 @@ class MainActivity : Activity(), SensorEventListener {
             val o = a.getJSONObject(i)
             items.add(Item(o.getInt("id"), o.getString("n"), o.getLong("d"), o.getLong("e")))
         }
+    }
+
+    private fun saveAccounts() {
+        val a = JSONArray()
+        accounts.forEach { a.put(it) }
+        getSharedPreferences("t", MODE_PRIVATE).edit().putString("accounts", a.toString()).apply()
+    }
+
+    private fun loadAccounts() {
+        val s = getSharedPreferences("t", MODE_PRIVATE).getString("accounts", "[]") ?: "[]"
+        val a = JSONArray(s)
+        for (i in 0 until a.length()) accounts.add(a.getString(i))
     }
 }
