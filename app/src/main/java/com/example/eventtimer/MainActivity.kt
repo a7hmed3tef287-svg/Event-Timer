@@ -16,6 +16,7 @@ import android.media.AudioAttributes
 import android.media.AudioManager
 import android.media.Ringtone
 import android.media.RingtoneManager
+import android.net.Uri
 import android.os.*
 import android.text.InputType
 import android.text.Spannable
@@ -53,6 +54,11 @@ class MainActivity : Activity(), SensorEventListener {
     private lateinit var soundPanel: LinearLayout
     private lateinit var addToggle: TextView
     private lateinit var soundToggle: TextView
+    private lateinit var gradBtn: Button
+    private lateinit var toneLabel: TextView
+    private var gradual = true
+    private val links = HashMap<String, String>()
+    private lateinit var gameLabel: TextView
     private var lastAddedId = -1
     private var soundOn = true
     private var testR: Ringtone? = null
@@ -95,11 +101,13 @@ class MainActivity : Activity(), SensorEventListener {
             Process.killProcess(Process.myPid())
         }
         soundOn = sp.getBoolean("sound", true)
+        gradual = sp.getBoolean("gradual", true)
         if (Build.VERSION.SDK_INT >= 33)
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
         try { load() } catch (e: Throwable) { items.clear() }
         try { loadAccounts() } catch (e: Throwable) { accounts.clear() }
         try { loadColors() } catch (e: Throwable) { colors.clear() }
+        try { loadLinks() } catch (e: Throwable) { links.clear() }
         items.forEach { if (it.name !in accounts) accounts.add(it.name) }
         buildUi()
         setAddOpen(items.isEmpty())
@@ -229,10 +237,74 @@ class MainActivity : Activity(), SensorEventListener {
 
     private fun accountMenu(n: String) {
         AlertDialog.Builder(this).setTitle(n)
-            .setItems(arrayOf("🎨 تغيير اللون", "🗑 حذف من القائمة")) { _, i ->
-                if (i == 0) pickColor(n)
-                else { accounts.remove(n); saveAccounts(); refreshAccounts() }
+            .setItems(arrayOf("🎨 تغيير اللون", "🔗 ضبط الرابط", "🗑 حذف من القائمة")) { _, i ->
+                when (i) {
+                    0 -> pickColor(n)
+                    1 -> setLink(n)
+                    else -> { accounts.remove(n); saveAccounts(); refreshAccounts() }
+                }
             }.show()
+    }
+
+    private fun setLink(n: String) {
+        val e = EditText(this)
+        e.setText(links[n] ?: "")
+        e.hint = "https://..."
+        e.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+        e.setPadding(dp(20), dp(12), dp(20), dp(12))
+        AlertDialog.Builder(this).setTitle("رابط $n").setView(e)
+            .setPositiveButton("حفظ") { _, _ ->
+                val v = e.text.toString().trim()
+                if (v.isEmpty()) links.remove(n) else links[n] = v
+                saveLinks(); rebuild()
+            }
+            .setNegativeButton("إلغاء", null).show()
+    }
+
+    private fun fixUrl(s: String): String = if (s.contains("://")) s else "https://$s"
+
+    private fun openLink(n: String) {
+        val l = links[n]
+        if (l.isNullOrBlank()) {
+            Toast.makeText(this, "مفيش رابط للحساب ده، دوس مطوّلاً على اسمه", Toast.LENGTH_SHORT).show()
+            return
+        }
+        try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(fixUrl(l.trim())))) }
+        catch (e: Throwable) { Toast.makeText(this, "الرابط مش صحيح", Toast.LENGTH_SHORT).show() }
+    }
+
+    private fun gamePkg(): String =
+        getSharedPreferences("t", MODE_PRIVATE).getString("game", "com.wan.wartuneh5") ?: ""
+
+    private fun gameName(): String = try {
+        packageManager.getApplicationLabel(packageManager.getApplicationInfo(gamePkg(), 0)).toString()
+    } catch (_: Throwable) { "مش متحدد" }
+
+    private fun refreshGameUi() { gameLabel.text = "🎮 التطبيق: " + gameName() }
+
+    private fun openGame() {
+        val i = packageManager.getLaunchIntentForPackage(gamePkg())
+        if (i == null) {
+            Toast.makeText(this, "تطبيق اللعبة مش موجود، اختاره من لوحة 🔊", Toast.LENGTH_LONG).show()
+            return
+        }
+        try { startActivity(i) } catch (e: Throwable) { showError(android.util.Log.getStackTraceString(e)) }
+    }
+
+    private fun pickGame() {
+        try {
+            val pm = packageManager
+            val q = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+            val apps = pm.queryIntentActivities(q, 0)
+                .map { Pair(it.loadLabel(pm).toString(), it.activityInfo.packageName) }
+                .distinctBy { it.second }
+                .sortedBy { it.first.lowercase() }
+            AlertDialog.Builder(this).setTitle("اختار تطبيق اللعبة")
+                .setItems(apps.map { it.first }.toTypedArray()) { _, k ->
+                    getSharedPreferences("t", MODE_PRIVATE).edit().putString("game", apps[k].second).apply()
+                    refreshGameUi()
+                }.show()
+        } catch (e: Throwable) { showError(android.util.Log.getStackTraceString(e)) }
     }
 
     private fun refreshAccounts() {
@@ -256,10 +328,47 @@ class MainActivity : Activity(), SensorEventListener {
         }
     }
 
+    private fun toneUri(): Uri {
+        val s = getSharedPreferences("t", MODE_PRIVATE).getString("tone", "") ?: ""
+        return if (s.isNotEmpty()) Uri.parse(s) else RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+    }
+
+    private fun toneName(): String = try {
+        RingtoneManager.getRingtone(this, toneUri()).getTitle(this)
+    } catch (_: Throwable) { "الافتراضية" }
+
+    private fun refreshToneUi() {
+        toneLabel.text = "🎵 النغمة: " + toneName()
+        gradBtn.text = if (gradual) "📈 رفع تدريجي: شغال" else "📈 رفع تدريجي: مقفول"
+        style3d(gradBtn, Color.parseColor(if (gradual) "#2EC4B6" else "#6B7280"))
+    }
+
+    private fun pickTone() {
+        try {
+            val i = Intent(RingtoneManager.ACTION_RINGTONE_PICKER)
+            i.putExtra(RingtoneManager.EXTRA_RINGTONE_TYPE,
+                RingtoneManager.TYPE_ALARM or RingtoneManager.TYPE_RINGTONE or RingtoneManager.TYPE_NOTIFICATION)
+            i.putExtra(RingtoneManager.EXTRA_RINGTONE_TITLE, "اختار نغمة المنبّه")
+            i.putExtra(RingtoneManager.EXTRA_RINGTONE_EXISTING_URI, toneUri())
+            i.putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_DEFAULT, true)
+            i.putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_SILENT, false)
+            startActivityForResult(i, 77)
+        } catch (e: Throwable) { showError(android.util.Log.getStackTraceString(e)) }
+    }
+
+    override fun onActivityResult(req: Int, res: Int, data: Intent?) {
+        super.onActivityResult(req, res, data)
+        if (req == 77 && res == RESULT_OK) {
+            val u: Uri? = data?.getParcelableExtra(RingtoneManager.EXTRA_RINGTONE_PICKED_URI)
+            getSharedPreferences("t", MODE_PRIVATE).edit().putString("tone", u?.toString() ?: "").apply()
+            refreshToneUi()
+        }
+    }
+
     private fun testSound() {
         try {
             testR?.stop()
-            val r = RingtoneManager.getRingtone(this, RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM))
+            val r = RingtoneManager.getRingtone(this, toneUri())
             r.audioAttributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).build()
             r.play()
             testR = r
@@ -269,6 +378,7 @@ class MainActivity : Activity(), SensorEventListener {
 
     private fun stopSound() {
         try { testR?.stop() } catch (_: Throwable) {}
+        try { startService(Intent(this, AlarmService::class.java).setAction("STOP")) } catch (_: Throwable) {}
         getSystemService(NotificationManager::class.java).cancelAll()
     }
 
@@ -401,6 +511,41 @@ class MainActivity : Activity(), SensorEventListener {
         srow.addView(stop, LinearLayout.LayoutParams(0, dp(48), 1f))
         soundPanel.addView(srow)
 
+        val toneBtn = btn("🎵 اختيار النغمة", "#7C5CFF")
+        toneBtn.textSize = 13f
+        gradBtn = btn("", "#2EC4B6")
+        gradBtn.textSize = 13f
+        toneLabel = TextView(this)
+        toneLabel.setTextColor(cGray)
+        toneLabel.textSize = 12f
+        toneLabel.setPadding(0, dp(8), 0, 0)
+        val row2 = LinearLayout(this)
+        row2.orientation = LinearLayout.HORIZONTAL
+        val q1 = LinearLayout.LayoutParams(0, dp(48), 1f)
+        q1.marginEnd = dp(6)
+        row2.addView(toneBtn, q1)
+        row2.addView(gradBtn, LinearLayout.LayoutParams(0, dp(48), 1f))
+        soundPanel.addView(row2, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+        soundPanel.addView(toneLabel)
+        toneBtn.setOnClickListener { pickTone() }
+        gradBtn.setOnClickListener {
+            gradual = !gradual
+            getSharedPreferences("t", MODE_PRIVATE).edit().putBoolean("gradual", gradual).apply()
+            refreshToneUi()
+        }
+        refreshToneUi()
+
+        val gameBtn = btn("🎮 اختيار تطبيق اللعبة", "#FF922B")
+        gameBtn.textSize = 13f
+        gameLabel = TextView(this)
+        gameLabel.setTextColor(cGray)
+        gameLabel.textSize = 12f
+        gameLabel.setPadding(0, dp(8), 0, 0)
+        soundPanel.addView(gameBtn, LinearLayout.LayoutParams(-1, dp(48)).apply { topMargin = dp(8) })
+        soundPanel.addView(gameLabel)
+        gameBtn.setOnClickListener { pickGame() }
+        refreshGameUi()
+
         val vl = TextView(this)
         vl.text = "🔊 مستوى صوت المنبّه"
         vl.setTextColor(cGray)
@@ -487,7 +632,8 @@ class MainActivity : Activity(), SensorEventListener {
         nm.typeface = Typeface.DEFAULT_BOLD
         nm.setTextColor(col)
         nm.maxLines = 1
-        nm.setOnLongClickListener { pickColor(it0.name); true }
+        nm.setOnClickListener { openGame() }
+        nm.setOnLongClickListener { accountMenu(it0.name); true }
         val time = TextView(this)
         time.textSize = 24f
         time.typeface = Typeface.MONOSPACE
@@ -518,6 +664,17 @@ class MainActivity : Activity(), SensorEventListener {
         btns.orientation = LinearLayout.HORIZONTAL
         val p1 = LinearLayout.LayoutParams(0, dp(42), 1f)
         p1.marginEnd = dp(6)
+        val gameB = btn("🎮 افتح", "#7C5CFF")
+        gameB.textSize = 13f
+        gameB.setOnClickListener { openGame() }
+        btns.addView(gameB, LinearLayout.LayoutParams(0, dp(42), 2f).apply { marginEnd = dp(6) })
+        if (!links[it0.name].isNullOrBlank()) {
+            val linkB = btn("🔗", "#4DABF7")
+            linkB.textSize = 13f
+            linkB.setOnClickListener { openLink(it0.name) }
+            btns.addView(linkB, LinearLayout.LayoutParams(0, dp(42), 1f).apply { marginEnd = dp(6) })
+        }
+        p1.weight = 2f
         btns.addView(restart, p1)
         btns.addView(del, LinearLayout.LayoutParams(0, dp(42), 1f))
 
@@ -609,6 +766,17 @@ class MainActivity : Activity(), SensorEventListener {
         val s = getSharedPreferences("t", MODE_PRIVATE).getString("accounts", "[]") ?: "[]"
         val a = JSONArray(s)
         for (i in 0 until a.length()) accounts.add(a.getString(i))
+    }
+
+    private fun saveLinks() {
+        val o = JSONObject()
+        links.forEach { (k, v) -> o.put(k, v) }
+        getSharedPreferences("t", MODE_PRIVATE).edit().putString("links", o.toString()).apply()
+    }
+
+    private fun loadLinks() {
+        val o = JSONObject(getSharedPreferences("t", MODE_PRIVATE).getString("links", "{}") ?: "{}")
+        o.keys().forEach { links[it] = o.getString(it) }
     }
 
     private fun saveColors() {
