@@ -34,10 +34,6 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 class MainActivity : CardsActivity(), SensorEventListener {
-    private val tick = object : Runnable {
-        override fun run() { update(); handler.postDelayed(this, 1000) }
-    }
-
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
         val sp = getSharedPreferences("t", MODE_PRIVATE)
@@ -186,7 +182,7 @@ class MainActivity : CardsActivity(), SensorEventListener {
                 }
                 val dur = mins * 60_000L
                 val now = System.currentTimeMillis()
-                val item = Item((now % 1_000_000_000L).toInt(), n, dur, now + dur)
+                val item = TimerItem((now % 1_000_000_000L).toInt(), n, dur, now + dur)
                 items.add(item); save(); schedule(item)
                 if (n !in accounts) { accounts.add(n); saveAccounts(); refreshAccounts() }
                 lastAddedId = item.id

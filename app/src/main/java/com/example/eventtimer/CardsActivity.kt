@@ -38,6 +38,10 @@ abstract class CardsActivity : ToolsActivity() {
 
     private val fmt = DateTimeFormatter.ofPattern("hh:mm a (d/M)")
 
+    val tick = object : Runnable {
+        override fun run() { update(); handler.postDelayed(this, 1000) }
+    }
+
     override fun rebuild() {
         try {
             list.removeAllViews()
